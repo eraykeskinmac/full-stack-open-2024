@@ -1,79 +1,127 @@
-const express = require("express");
-const app = express();
+// Dependencies
+const express = require('express')
+const app = express()
 
-app.use(express.json());
+require('dotenv').config()
 
-let notes = [
-  {
-    id: "1",
-    content: "HTML is easy",
-    important: true,
-  },
-  {
-    id: "2",
-    content: "Browser can execute only JavaScript",
-    important: false,
-  },
-  {
-    id: "3",
-    content: "GET and POST are the most important methods of HTTP protocol",
-    important: true,
-  },
-];
+const cors = require('cors')
+const morgan = require('morgan')
 
-app.get("/", (request, response) => {
-  response.send("<h1>Hello World!</h1>");
-});
+const Person = require('./models/person')
 
-app.get("/api/notes", (request, response) => {
-  response.json(notes);
-});
+// Utils
+morgan.token('body', (request) => JSON.stringify(request.body))
 
-const generateId = () => {
-  const maxId =
-    notes.length > 0 ? Math.max(...notes.map((n) => Number(n.id))) : 0;
-  return String(maxId + 1);
-};
+const uknownEnpoint = (request, response) => {
+  response.status(404).send({ error: 'unknown endpoint' })
+}
 
-app.post("/api/notes", (request, response) => {
-  const body = request.body;
+const errorHandler = (error, request, response, next) => {
+  console.error(error.message)
 
-  if (!body.content) {
+  if (error.name === 'CastError') {
+    return response.status(400).send({ error: 'malformatted id' })
+  } else if (
+    error.name === 'ValidationError' ||
+    error.number === 'ValidationError'
+  ) {
     return response.status(400).json({
-      error: "content missing",
-    });
+      error: error.message,
+    })
   }
 
-  const note = {
-    content: body.content,
-    important: Boolean(body.important) || false,
-    id: generateId(),
-  };
+  next(error)
+}
 
-  notes = notes.concat(note);
+// Middlewares
+app.use(cors())
+app.use(express.json())
+app.use(
+  morgan(':method :url :status :res[content-length] - :response-time ms :body')
+)
+app.use(express.static('dist'))
 
-  response.json(note);
-});
+// Endpoints
+app.get('/info', (request, response) => {
+  response.send(
+    `
+    <p>
+    Phonebook has info for:  ${Person.length} people
+    <br/><br/>
+    Today: ${new Date()}
+    </p>
+    `
+  )
+})
 
-app.get("/api/notes/:id", (request, response) => {
-  const id = request.params.id;
-  const note = notes.find((note) => note.id === id);
+app.get('/api/persons', (request, response) => {
+  Person.find({}).then((persons) => {
+    response.json(persons)
+  })
+})
 
-  if (note) {
-    response.json(note);
-  } else {
-    response.status(404).end();
-  }
-});
+app.get('/api/persons/:id', (request, response, next) => {
+  Person.findById(request.params.id)
+    .then((person) => {
+      if (person) {
+        response.json(person)
+      } else {
+        response.status(404).end()
+      }
+    })
+    .catch((error) => next(error))
+})
 
-app.delete("/api/notes/:id", (request, response) => {
-  const id = request.params.id;
-  notes = notes.filter((note) => note.id !== id);
+app.post('/api/persons', (request, response, next) => {
+  const body = request.body
 
-  response.status(204).end();
-});
+  if (!body.name) return response.status(400).json({ error: 'name missing' })
 
-const PORT = 3001;
+  if (!body.number)
+    return response.status(400).json({ error: 'number missing' })
+
+  const person = new Person({
+    name: body.name,
+    number: body.number,
+  })
+
+  person
+    .save()
+    .then((savedPerson) => {
+      response.json(savedPerson)
+    })
+    .catch((error) => next(error))
+})
+
+app.delete('/api/persons/:id', (request, response, next) => {
+  Person.findByIdAndDelete(request.params.id)
+    .then(() => {
+      response.status(204).end()
+    })
+    .catch((error) => next(error))
+})
+
+app.put('/api/persons/:id', (request, response, next) => {
+  const { name, number } = request.body
+
+  Person.findByIdAndUpdate(
+    request.params.id,
+    { name, number },
+    { new: true, runValidators: true, context: 'query' }
+  )
+
+    .then((updatedPerson) => {
+      response.json(updatedPerson)
+    })
+    .catch((error) => next(error))
+})
+
+// Middlewares
+app.use(uknownEnpoint)
+app.use(errorHandler)
+
+// Listen
+const PORT = process.env.PORT || 3001
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+  console.log(`Server running on port: http://localhost:${PORT}`)
+})
